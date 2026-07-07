@@ -1,8 +1,9 @@
 mlx-whisper
-coqui-tts
+torchaudio
+transformers==4.57.6
+coqui-tts[codec]
 sounddevice
 soundfile
+webrtcvad-wheels
 numpy
-pynput
-anthropic
-python-dotenv
+yandex-music
