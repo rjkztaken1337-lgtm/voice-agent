@@ -1,0 +1,8 @@
+mlx-whisper
+coqui-tts
+sounddevice
+soundfile
+numpy
+pynput
+anthropic
+python-dotenv
