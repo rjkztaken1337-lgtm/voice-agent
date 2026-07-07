@@ -1,5 +1,5 @@
-"""Throwaway smoke test: confirms the Picovoice AccessKey + .ppn model work and
-Porcupine actually fires on "Vlad", in isolation from the rest of the pipeline.
+"""Throwaway smoke test: confirms the trained openWakeWord ONNX model loads and
+actually fires on "Vlad", in isolation from the rest of the pipeline.
 Run, say "Vlad" a few times, Ctrl+C to stop. Delete once the feature is confirmed
 working end-to-end."""
 

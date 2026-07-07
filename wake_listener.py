@@ -17,7 +17,7 @@ SILENCE_FRAMES_TO_END = int(600 / FRAME_MS)  # ~0.6s of trailing silence ends an
 class AudioCapture:
     """Owns one persistent mic input stream and feeds two independently-sized
     frame consumers from it: webrtcvad (30ms/480-sample frames) for speech
-    segmentation, and Porcupine (whatever frame size its loaded model wants)
+    segmentation, and the openWakeWord detector (80ms/1280-sample frames)
     for wake-word detection.
 
     A ring buffer holds the last `prebuffer_ms` of raw audio so a command

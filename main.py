@@ -60,7 +60,7 @@ def speak_cached(text: str, language: str = "ru"):
 def _strip_wake_prefix(text: str) -> str:
     """Best-effort strip of a leading "Vlad"/"Влад" from text transcribed out of
     record_after_wake()'s audio, which starts at the wake word itself since
-    detection is now acoustic (Porcupine), not over already-transcribed text."""
+    detection is now acoustic (openWakeWord), not over already-transcribed text."""
     return _WAKE_PREFIX_RE.sub("", text, count=1).strip()
 
 
@@ -191,8 +191,8 @@ def main():
     capture.start()
 
     def _duck_on_wake():
-        # Fires the instant Porcupine hits, before any transcription happens —
-        # this is the whole point of the acoustic wake word over the old
+        # Fires the instant the wake-word detector hits, before any transcription
+        # happens — this is the whole point of the acoustic wake word over the old
         # regex-over-transcript approach, which couldn't duck until the full
         # wake utterance had already been recorded and transcribed.
         try:
