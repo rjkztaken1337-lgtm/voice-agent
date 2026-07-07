@@ -6,3 +6,4 @@ voice_sample/
 db/
 *.wav
 .env
+wake_models/

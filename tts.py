@@ -43,7 +43,7 @@ def _get_conditioning_latents():
 
 def warm_up():
     """Loads the TTS model onto MPS and precomputes the cloned voice's
-    conditioning latents once, so the first real reply doesn't pay for it."""
+    conditioning latents, so the first real reply doesn't pay for any of it."""
     _get_conditioning_latents()
 
 

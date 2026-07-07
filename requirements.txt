@@ -7,3 +7,4 @@ soundfile
 webrtcvad-wheels
 numpy
 yandex-music
+openwakeword

@@ -8,11 +8,12 @@ import config
 import fastpath
 import local_actions
 import music_control
+import openwakeword_wake
 import stt
 import tts
-from wake_listener import VadListener
+from wake_listener import AudioCapture
 
-_WAKE_RE = re.compile(r"\b(?:привет[,!.]?\s*)?влад[а-яё]*\b[,!.]?\s*", re.IGNORECASE)
+_WAKE_PREFIX_RE = re.compile(r"^\s*(?:vlad|влад[а-яё]*)[,!.]?\s*", re.IGNORECASE)
 _SENTENCE_RE = re.compile(r"(?<=[.!?…])\s+")
 # A sentence boundary in a live token stream: terminal punctuation (optionally
 # closing a quote/paren) immediately followed by whitespace. "3.5" / "5,5" won't
@@ -56,13 +57,11 @@ def speak_cached(text: str, language: str = "ru"):
     audio_io.play_wav(tts.get_cached(text, language=language))
 
 
-def split_wake_word(text: str):
-    """Returns (woke: bool, remainder: str) — remainder is any command spoken
-    right after the wake phrase in the same breath ("влад, который час")."""
-    match = _WAKE_RE.search(text)
-    if not match:
-        return False, ""
-    return True, text[match.end():].strip()
+def _strip_wake_prefix(text: str) -> str:
+    """Best-effort strip of a leading "Vlad"/"Влад" from text transcribed out of
+    record_after_wake()'s audio, which starts at the wake word itself since
+    detection is now acoustic (Porcupine), not over already-transcribed text."""
+    return _WAKE_PREFIX_RE.sub("", text, count=1).strip()
 
 
 def _start_stream_synth(chunk_iter, language: str = "ru"):
@@ -158,7 +157,7 @@ def handle_command(command_text: str):
         player.close()
 
 
-def converse(listener: VadListener):
+def converse(capture: AudioCapture):
     """After a command is handled, keep listening for follow-ups for a short
     window without requiring the wake word again. Falls back to wake-word mode
     once the user goes quiet.
@@ -172,7 +171,7 @@ def converse(listener: VadListener):
             music_control.pause()
         except Exception:
             pass
-        audio = listener.listen_for_utterance(timeout=config.FOLLOWUP_TIMEOUT_SEC)
+        audio = capture.listen_for_utterance(timeout=config.FOLLOWUP_TIMEOUT_SEC)
         if audio is None or audio.size == 0:
             return
         text = stt.transcribe(audio)
@@ -182,48 +181,51 @@ def converse(listener: VadListener):
 
 
 def main():
-    print(f"Слушаю. Скажи '{config.WAKE_WORD.capitalize()}' чтобы начать. Ctrl+C для выхода.", flush=True)
+    print(f"Слушаю. Скажи '{config.WAKE_WORD}' чтобы начать. Ctrl+C для выхода.", flush=True)
     tts.warm_up()
     for phrase in ["Да?", "Сделал погромче.", "Сделал потише."]:
         tts.get_cached(phrase)
-    listener = VadListener()
 
-    while True:
-        audio = listener.listen_for_utterance()
-        text = stt.transcribe(audio)
-        if not text:
-            continue
+    detector = openwakeword_wake.create_from_config()
+    capture = AudioCapture()
+    capture.start()
 
-        woke, remainder = split_wake_word(text)
-        if not woke:
-            continue
-
-        # Duck the currently playing track to silence for the whole interaction —
-        # otherwise the mic can't hear the user over it (VAD never sees trailing
-        # silence, so it keeps extending the segment and STT hallucinates). Safe
-        # no-op if nothing is playing; resumes the same track unless the command
-        # itself changed/stopped it.
+    def _duck_on_wake():
+        # Fires the instant Porcupine hits, before any transcription happens —
+        # this is the whole point of the acoustic wake word over the old
+        # regex-over-transcript approach, which couldn't duck until the full
+        # wake utterance had already been recorded and transcribed.
         try:
             music_control.pause()
         except Exception:
             pass
-        try:
-            if remainder:
-                handle_command(remainder)
-            else:
-                speak_cached("Да?")
-                audio2 = listener.listen_for_utterance(timeout=config.FOLLOWUP_TIMEOUT_SEC)
-                command_text = stt.transcribe(audio2) if audio2 is not None else ""
-                if not command_text:
-                    continue
-                handle_command(command_text)
 
-            converse(listener)
-        finally:
+    try:
+        while True:
+            capture.wait_for_wake(detector, on_detected=_duck_on_wake)
+
             try:
-                music_control.resume()
-            except Exception:
-                pass
+                audio = capture.record_after_wake()
+                text = _strip_wake_prefix(stt.transcribe(audio)) if audio is not None and audio.size else ""
+                if not text:
+                    speak_cached("Да?")
+                    audio2 = capture.listen_for_utterance(timeout=config.FOLLOWUP_TIMEOUT_SEC)
+                    command_text = stt.transcribe(audio2) if audio2 is not None else ""
+                    if not command_text:
+                        continue
+                    handle_command(command_text)
+                else:
+                    handle_command(text)
+
+                converse(capture)
+            finally:
+                try:
+                    music_control.resume()
+                except Exception:
+                    pass
+    finally:
+        detector.delete()
+        capture.stop()
 
 
 if __name__ == "__main__":
