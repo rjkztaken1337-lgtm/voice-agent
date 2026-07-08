@@ -57,21 +57,45 @@ def _find_claude_bin() -> str:
 # user's existing Claude Code subscription (OAuth) instead of a billed Anthropic
 # API key, which the user cannot fund from their country.
 CLAUDE_BIN = _find_claude_bin()
-# Haiku + low effort trades some reply quality/grammar for much lower per-turn
-# latency and cost than Sonnet — acceptable here since replies are short and
-# conversational, not code-heavy reasoning.
+# Haiku keeps per-turn latency and cost low (vs. Sonnet) for short,
+# conversational replies. Effort raised from "low" to "medium" to spend more
+# reasoning budget on Russian grammar/phrasing — watch the [timing] prints in
+# agent.py to sanity-check this hasn't made replies feel sluggish.
 CLAUDE_MODEL = "haiku"
-CLAUDE_EFFORT = "low"
+CLAUDE_EFFORT = "medium"
 
 WAKE_WORD = "Рэс"
 FOLLOWUP_TIMEOUT_SEC = 7.0
 
-WHISPER_MODEL = "mlx-community/whisper-medium-mlx"
+# large-v3-turbo reuses full large-v3's encoder with a distilled 4-layer
+# decoder — near large-v3 accuracy, much faster than large-v3 proper. If live
+# testing shows its Russian accuracy isn't good enough, swap to
+# "mlx-community/whisper-large-v3-mlx" (full large-v3, no distillation) —
+# one-line change, nothing else to touch.
+WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
 # Pinned to "ru" rather than auto-detect: short/clipped utterances (a bare wake
 # word, a 2-3 word command) gave Whisper too little signal to guess the
 # language reliably, and a wrong guess produced garbled or English output even
 # though the assistant only ever hears Russian.
 WHISPER_LANGUAGE = "ru"
+# Beam search (vs. default greedy) trades latency for accuracy — worth it here
+# since we already prioritize accuracy for short commands. 5 is Whisper's own
+# standard beam width.
+WHISPER_BEAM_SIZE = 5
+# Seeds the decoder with domain vocabulary so short, acoustically ambiguous
+# utterances (wake word, app/command names, city names) bias toward correct
+# spellings instead of the nearest-sounding dictionary word. Only the last
+# ~224 tokens influence decoding, so keep this compact.
+WHISPER_INITIAL_PROMPT = (
+    "Голосовые команды ассистенту по имени Рэс: включи Яндекс Музыку, "
+    "поставь плейлист, следующий трек, останови музыку, сделай погромче, "
+    "сделай потише, какая погода в Петербурге, в Москве, который час."
+)
+# False rather than the mlx_whisper default (True): each call transcribes one
+# short, self-contained utterance, not a continuous long-form stream, so
+# there's no real "previous segment" context worth conditioning on within a
+# call — and conditioning risks a bad early guess biasing the rest of it.
+WHISPER_CONDITION_ON_PREVIOUS_TEXT = False
 
 # Default location for the instant weather command (used when no city is spoken).
 # QUERY is what we send to the weather API (geocodes reliably in English);
@@ -81,5 +105,15 @@ DEFAULT_CITY_SPOKEN = "в Петербурге"
 
 VOICE_SAMPLE_PATH = BASE_DIR / "voice_sample" / "friend.wav"
 TTS_MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
+
+# Digit-to-words conversion for TTS input (e.g. "23" -> "двадцать три"). Low
+# risk, on by default.
+TTS_NORMALIZE_NUMBERS = True
+# ruaccent stress-mark injection before TTS. OFF by default: XTTS was not
+# trained on ruaccent's "+"-before-stressed-vowel convention (built for Silero
+# TTS), so behavior here is unverified and may sound worse, not better — see
+# text_normalize.py's module docstring. Flip to True to live-test, flip back
+# to revert; no other code changes needed either way.
+TTS_USE_RUACCENT = False
 
 SAMPLE_RATE = 16000

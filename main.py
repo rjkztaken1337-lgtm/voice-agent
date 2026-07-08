@@ -9,6 +9,7 @@ import fastpath
 import local_actions
 import music_control
 import stt
+import text_normalize
 import tts
 from wake_listener import AudioCapture
 
@@ -191,6 +192,7 @@ def converse(capture: AudioCapture):
 def main():
     print(f"Слушаю. Скажи '{config.WAKE_WORD}' чтобы начать. Ctrl+C для выхода.", flush=True)
     tts.warm_up()
+    text_normalize.warm_up()
     for phrase in ["Да?", "Сделал погромче.", "Сделал потише."]:
         tts.get_cached(phrase)
 

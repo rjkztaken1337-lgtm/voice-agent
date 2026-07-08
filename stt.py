@@ -1,4 +1,5 @@
 import re
+import time
 
 import mlx_whisper
 import numpy as np
@@ -36,10 +37,15 @@ def transcribe(audio: np.ndarray) -> str:
     """audio: float32 mono array at config.SAMPLE_RATE."""
     if audio.size == 0:
         return ""
+    t0 = time.monotonic()
     result = mlx_whisper.transcribe(
         audio,
         path_or_hf_repo=_MODEL_NAME,
         language=config.WHISPER_LANGUAGE,
+        beam_size=config.WHISPER_BEAM_SIZE,
+        initial_prompt=config.WHISPER_INITIAL_PROMPT,
+        condition_on_previous_text=config.WHISPER_CONDITION_ON_PREVIOUS_TEXT,
     )
+    print(f"[timing] stt={round((time.monotonic() - t0) * 1000)}ms model={_MODEL_NAME}", flush=True)
     text = result["text"].strip()
     return _strip_hallucinations(text)

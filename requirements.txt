@@ -1,4 +1,4 @@
-mlx-whisper
+mlx-whisper==0.4.3
 torchaudio
 transformers==4.57.6
 coqui-tts[codec]
@@ -8,3 +8,5 @@ webrtcvad-wheels
 numpy
 yandex-music
 openwakeword
+num2words==0.5.14
+ruaccent==1.5.8.3

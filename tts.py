@@ -6,6 +6,7 @@ import soundfile as sf
 from TTS.api import TTS
 
 import config
+import text_normalize
 
 _tts = None
 _cond_latents = None  # (gpt_cond_latent, speaker_embedding) for the cloned voice
@@ -48,6 +49,8 @@ def warm_up():
 
 
 def synthesize_array(text: str, language: str = "ru") -> np.ndarray:
+    if language == "ru":
+        text = text_normalize.prepare_for_tts(text)
     gpt_cond_latent, speaker_embedding = _get_conditioning_latents()
     model = _get_tts().synthesizer.tts_model
     with _synth_lock:
