@@ -246,9 +246,7 @@ def main():
             # window, since there's no command boundary to bracket.
             stripped = text.strip()
             if _BARE_VOL_UP_RE.match(stripped) or _BARE_VOL_DOWN_RE.match(stripped):
-                reply = local_actions.handle(stripped)
-                if reply:
-                    speak_cached(reply)
+                local_actions.handle(stripped)
                 capture.flush()
                 continue
 

@@ -231,8 +231,8 @@ def _music_play(text):
 
 # --- volume ------------------------------------------------------------------
 _VOL_SET_RE = re.compile(r"громкость\s+(?:на\s+)?(\d{1,3})")
-_VOL_UP_RE = re.compile(r"\b(громче|погромче|прибавь|сделай громче)")
-_VOL_DOWN_RE = re.compile(r"\b(тише|потише|убавь|сделай тише)")
+_VOL_UP_RE = re.compile(r"\b(громче|погромче|прибавь|сделай громче)", re.IGNORECASE)
+_VOL_DOWN_RE = re.compile(r"\b(тише|потише|убавь|сделай тише)", re.IGNORECASE)
 
 
 def _osa(script):
