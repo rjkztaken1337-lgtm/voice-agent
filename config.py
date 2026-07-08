@@ -78,10 +78,10 @@ WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
 # language reliably, and a wrong guess produced garbled or English output even
 # though the assistant only ever hears Russian.
 WHISPER_LANGUAGE = "ru"
-# Beam search (vs. default greedy) trades latency for accuracy — worth it here
-# since we already prioritize accuracy for short commands. 5 is Whisper's own
-# standard beam width.
-WHISPER_BEAM_SIZE = 5
+# mlx_whisper's decoder doesn't implement beam search at all (raises
+# NotImplementedError for any value here) — greedy decoding is the only mode
+# this backend supports, so this must stay None.
+WHISPER_BEAM_SIZE = None
 # Seeds the decoder with domain vocabulary so short, acoustically ambiguous
 # utterances (wake word, app/command names, city names) bias toward correct
 # spellings instead of the nearest-sounding dictionary word. Only the last
