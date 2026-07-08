@@ -15,8 +15,10 @@ _HALLUCINATIONS = re.compile(
     r"^(thanks?\s+for\s+watching!?|thank\s+you\s+for\s+watching!?|"
     r"subscribe(\s+to\s+my\s+channel)?!?|"
     r"please\s+subscribe!?|like\s+and\s+subscribe!?|"
-    r"продолжение\s+следует\.?|субтитры\s+делал\s+.*|"
-    r"редактор\s+субтитров\s+.*|корректор\s+.*)\.?$",
+    r"продолжение\s+следует|"
+    r"смотрите\s+продолжение(\s+в\s+следующей\s+серии)?|"
+    r"субтитры\s+(делал|сделал|создавал|подготовил|редактировал)\s+.*|"
+    r"редактор\s+субтитров\s+.*|корректор\s+.*)[.!?…]*$",
     re.IGNORECASE,
 )
 
