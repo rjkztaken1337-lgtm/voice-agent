@@ -70,13 +70,24 @@ def split_wake_word(text: str):
 
 def _start_stream_synth(chunk_iter, language: str = "ru"):
     """Consumes a stream of text chunks from the brain, assembles them into whole
-    sentences, and synthesizes each sentence in a background thread as soon as it
-    completes — pushing ready audio onto a queue. Returns the queue immediately so
-    synthesis (and the brain subprocess feeding it) start running right away,
-    before the caller begins playback."""
-    audio_q = queue.Queue(maxsize=2)
+    sentences, and synthesizes each sentence as soon as it completes — pushing
+    ready audio onto a queue. Returns the queue immediately so synthesis (and the
+    brain subprocess feeding it) start running right away, before the caller
+    begins playback.
 
-    def produce():
+    Splitting into brain and synth threads (rather than one thread doing both)
+    matters because tts.synthesize_array() is a multi-second blocking call: if
+    the same thread that reads chunk_iter also synthesizes, draining the brain's
+    subprocess stdout stalls for the full synth duration between sentences,
+    which measurably added the sum of all per-sentence synth times on top of the
+    brain's own generation time (confirmed via [timing] instrumentation: wall
+    matched first_token + sum(tts_synth) almost exactly). With separate threads,
+    the brain can keep generating/streaming the next sentence's text while the
+    current one is still synthesizing."""
+    audio_q = queue.Queue(maxsize=2)
+    sentence_q = queue.Queue()
+
+    def collect():
         buf = ""
         try:
             for chunk in chunk_iter:
@@ -88,22 +99,35 @@ def _start_stream_synth(chunk_iter, language: str = "ru"):
                     sentence = buf[: match.end()].strip()
                     buf = buf[match.end():]
                     if sentence:
-                        print(f"[Рэс] {sentence}", flush=True)
-                        t_synth = time.monotonic()
-                        audio_q.put(tts.synthesize_array(sentence, language=language))
-                        print(f"[timing] tts_synth={round((time.monotonic() - t_synth) * 1000)}ms len={len(sentence)}", flush=True)
+                        sentence_q.put(sentence)
             tail = buf.strip()
             if tail:
-                print(f"[Рэс] {tail}", flush=True)
+                sentence_q.put(tail)
+        except Exception as exc:
+            sentence_q.put(exc)
+        finally:
+            sentence_q.put(_STREAM_DONE)
+
+    def synthesize():
+        try:
+            while True:
+                item = sentence_q.get()
+                if item is _STREAM_DONE:
+                    return
+                if isinstance(item, Exception):
+                    audio_q.put(item)
+                    return
+                print(f"[Рэс] {item}", flush=True)
                 t_synth = time.monotonic()
-                audio_q.put(tts.synthesize_array(tail, language=language))
-                print(f"[timing] tts_synth={round((time.monotonic() - t_synth) * 1000)}ms len={len(tail)}", flush=True)
+                audio_q.put(tts.synthesize_array(item, language=language))
+                print(f"[timing] tts_synth={round((time.monotonic() - t_synth) * 1000)}ms len={len(item)}", flush=True)
         except Exception as exc:
             audio_q.put(exc)
         finally:
             audio_q.put(_STREAM_DONE)
 
-    threading.Thread(target=produce, daemon=True).start()
+    threading.Thread(target=collect, daemon=True).start()
+    threading.Thread(target=synthesize, daemon=True).start()
     return audio_q
 
 
