@@ -266,6 +266,8 @@ def main():
                 # there's no active playback to interrupt.
                 if not music_control.is_playing():
                     converse(capture)
+                else:
+                    capture.flush()
             finally:
                 try:
                     music_control.resume()
