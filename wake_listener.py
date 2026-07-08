@@ -1,6 +1,4 @@
-import collections
 import queue
-import threading
 
 import numpy as np
 import sounddevice as sd
@@ -15,29 +13,17 @@ SILENCE_FRAMES_TO_END = int(600 / FRAME_MS)  # ~0.6s of trailing silence ends an
 
 
 class AudioCapture:
-    """Owns one persistent mic input stream and feeds two independently-sized
-    frame consumers from it: webrtcvad (30ms/480-sample frames) for speech
-    segmentation, and the openWakeWord detector (80ms/1280-sample frames)
-    for wake-word detection.
+    """Owns one persistent mic input stream and hands out speech segments via
+    webrtcvad (30ms/480-sample frames)."""
 
-    A ring buffer holds the last `prebuffer_ms` of raw audio so a command
-    spoken in the same breath as the wake word ("Vlad, что там с погодой")
-    isn't clipped by record_after_wake().
-    """
-
-    def __init__(self, aggressiveness: int = 2, prebuffer_ms: int = 400):
+    def __init__(self, aggressiveness: int = 2):
         self._vad = webrtcvad.Vad(aggressiveness)
         self._stream = None
         self._queue = queue.Queue()
         self._leftover = b""
-        self._ring_lock = threading.Lock()
-        self._ring = collections.deque(maxlen=int(config.SAMPLE_RATE * prebuffer_ms / 1000) * 2)
 
     def _callback(self, indata, frames, time_info, status):
-        data = bytes(indata)
-        with self._ring_lock:
-            self._ring.extend(data)
-        self._queue.put(data)
+        self._queue.put(bytes(indata))
 
     def start(self) -> None:
         self._stream = sd.RawInputStream(
@@ -55,6 +41,18 @@ class AudioCapture:
             self._stream.close()
             self._stream = None
 
+    def flush(self) -> None:
+        """Discards whatever the mic captured while we were speaking — without
+        this, our own TTS (picked up off the speakers, not headphones) sits in
+        the queue and the next listen_for_utterance() treats it as user speech,
+        causing the laggy "keeps listening" pileup after every reply."""
+        self._leftover = b""
+        try:
+            while True:
+                self._queue.get_nowait()
+        except queue.Empty:
+            pass
+
     def _read_frame(self, frame_bytes: int) -> bytes:
         """Blocks until `frame_bytes` of fresh audio are available and returns
         exactly that many, carrying any excess over to the next call."""
@@ -63,22 +61,6 @@ class AudioCapture:
             buf.extend(self._queue.get())
         frame, self._leftover = bytes(buf[:frame_bytes]), bytes(buf[frame_bytes:])
         return frame
-
-    def _ring_snapshot(self) -> bytes:
-        with self._ring_lock:
-            return bytes(self._ring)
-
-    def wait_for_wake(self, detector, on_detected=None) -> None:
-        """Blocks until the wake word is detected. Calls `on_detected()`
-        (e.g. music_control.pause) the instant it fires, before returning."""
-        frame_bytes = detector.frame_length * 2
-        while True:
-            frame = self._read_frame(frame_bytes)
-            samples = np.frombuffer(frame, dtype=np.int16)
-            if detector.detected(samples):
-                if on_detected is not None:
-                    on_detected()
-                return
 
     def _collect_until_silence(self, speech_frames, num_silence):
         while True:
@@ -93,17 +75,6 @@ class AudioCapture:
         pcm = b"".join(speech_frames)
         audio_int16 = np.frombuffer(pcm, dtype=np.int16)
         return audio_int16.astype(np.float32) / 32768.0
-
-    def record_after_wake(self):
-        """Records the utterance right after a wake-word hit. Seeds from the
-        ring buffer already in "triggered" state instead of re-running VAD's
-        pretrigger gate, so a command spoken in the same breath isn't clipped."""
-        prebuffer = self._ring_snapshot()
-        usable_len = len(prebuffer) - (len(prebuffer) % FRAME_BYTES)
-        speech_frames = [
-            prebuffer[i:i + FRAME_BYTES] for i in range(0, usable_len, FRAME_BYTES)
-        ]
-        return self._collect_until_silence(speech_frames, num_silence=0)
 
     def listen_for_utterance(self, timeout: float | None = None):
         """Blocks until speech is detected and returns the segment once trailing

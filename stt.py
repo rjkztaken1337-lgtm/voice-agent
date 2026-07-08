@@ -20,7 +20,7 @@ _HALLUCINATIONS = re.compile(
 )
 
 # Whisper often tacks a hallucinated outro onto the end (or start) of a real
-# utterance rather than hallucinating the whole thing, e.g. "Влад включи
+# utterance rather than hallucinating the whole thing, e.g. "Рэс включи
 # музыку. Продолжение следует." — split into sentences and drop only the
 # hallucinated ones instead of keeping or discarding the whole string.
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")

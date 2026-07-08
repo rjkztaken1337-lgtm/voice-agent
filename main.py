@@ -8,12 +8,11 @@ import config
 import fastpath
 import local_actions
 import music_control
-import openwakeword_wake
 import stt
 import tts
 from wake_listener import AudioCapture
 
-_WAKE_PREFIX_RE = re.compile(r"^\s*(?:vlad|влад[а-яё]*)[,!.]?\s*", re.IGNORECASE)
+_WAKE_RE = re.compile(r"\b(?:привет[,!.]?\s*)?р[еэ]с[а-яё]*\b[,!.]?\s*", re.IGNORECASE)
 _SENTENCE_RE = re.compile(r"(?<=[.!?…])\s+")
 # A sentence boundary in a live token stream: terminal punctuation (optionally
 # closing a quote/paren) immediately followed by whitespace. "3.5" / "5,5" won't
@@ -31,7 +30,7 @@ def speak(text: str, language: str = "ru"):
     """Synthesizes and plays sentence-by-sentence: the next sentence synthesizes
     in the background while the current one plays, so long replies start
     speaking almost immediately instead of waiting on the full synthesis."""
-    print(f"[Влад] {text}", flush=True)
+    print(f"[Рэс] {text}", flush=True)
     sentences = _split_sentences(text)
     audio_q = queue.Queue(maxsize=1)
 
@@ -53,15 +52,18 @@ def speak(text: str, language: str = "ru"):
 
 
 def speak_cached(text: str, language: str = "ru"):
-    print(f"[Влад] {text}", flush=True)
+    print(f"[Рэс] {text}", flush=True)
     audio_io.play_wav(tts.get_cached(text, language=language))
 
 
-def _strip_wake_prefix(text: str) -> str:
-    """Best-effort strip of a leading "Vlad"/"Влад" from text transcribed out of
-    record_after_wake()'s audio, which starts at the wake word itself since
-    detection is now acoustic (openWakeWord), not over already-transcribed text."""
-    return _WAKE_PREFIX_RE.sub("", text, count=1).strip()
+def split_wake_word(text: str):
+    """Looks for the wake word anywhere in a transcribed utterance. Returns the
+    text after it (may be empty, e.g. a bare "Рэс") if found, or None if the
+    wake word wasn't said at all."""
+    match = _WAKE_RE.search(text)
+    if not match:
+        return None
+    return text[match.end():].strip()
 
 
 def _start_stream_synth(chunk_iter, language: str = "ru"):
@@ -84,11 +86,11 @@ def _start_stream_synth(chunk_iter, language: str = "ru"):
                     sentence = buf[: match.end()].strip()
                     buf = buf[match.end():]
                     if sentence:
-                        print(f"[Влад] {sentence}", flush=True)
+                        print(f"[Рэс] {sentence}", flush=True)
                         audio_q.put(tts.synthesize_array(sentence, language=language))
             tail = buf.strip()
             if tail:
-                print(f"[Влад] {tail}", flush=True)
+                print(f"[Рэс] {tail}", flush=True)
                 audio_q.put(tts.synthesize_array(tail, language=language))
         except Exception as exc:
             audio_q.put(exc)
@@ -163,7 +165,7 @@ def converse(capture: AudioCapture):
     once the user goes quiet.
 
     Re-ducks before every listen, not just once at entry: the command that got
-    us here may have just started a fresh (unpaused) track — e.g. "Влад, включи
+    us here may have just started a fresh (unpaused) track — e.g. "Рэс, включи
     любимые треки" — or a previous follow-up may have (next track), so each
     turn needs its own pause() to catch whatever is currently playing."""
     while True:
@@ -171,6 +173,7 @@ def converse(capture: AudioCapture):
             music_control.pause()
         except Exception:
             pass
+        capture.flush()
         audio = capture.listen_for_utterance(timeout=config.FOLLOWUP_TIMEOUT_SEC)
         if audio is None or audio.size == 0:
             return
@@ -178,6 +181,11 @@ def converse(capture: AudioCapture):
         if not text:
             return
         handle_command(text)
+        try:
+            if music_control.is_playing():
+                return
+        except Exception:
+            pass
 
 
 def main():
@@ -186,45 +194,53 @@ def main():
     for phrase in ["Да?", "Сделал погромче.", "Сделал потише."]:
         tts.get_cached(phrase)
 
-    detector = openwakeword_wake.create_from_config()
     capture = AudioCapture()
     capture.start()
 
-    def _duck_on_wake():
-        # Fires the instant the wake-word detector hits, before any transcription
-        # happens — this is the whole point of the acoustic wake word over the old
-        # regex-over-transcript approach, which couldn't duck until the full
-        # wake utterance had already been recorded and transcribed.
-        try:
-            music_control.pause()
-        except Exception:
-            pass
-
     try:
         while True:
-            capture.wait_for_wake(detector, on_detected=_duck_on_wake)
+            audio = capture.listen_for_utterance()
+            if audio is None or audio.size == 0:
+                continue
+            text = stt.transcribe(audio)
+            if not text:
+                continue
+            # Wake word is matched over the transcript, not acoustically — ducking
+            # can only start once transcription confirms the wake word was said.
+            command_text = split_wake_word(text)
+            if command_text is None:
+                continue
 
             try:
-                audio = capture.record_after_wake()
-                text = _strip_wake_prefix(stt.transcribe(audio)) if audio is not None and audio.size else ""
-                if not text:
-                    speak_cached("Да?")
-                    audio2 = capture.listen_for_utterance(timeout=config.FOLLOWUP_TIMEOUT_SEC)
-                    command_text = stt.transcribe(audio2) if audio2 is not None else ""
-                    if not command_text:
-                        continue
-                    handle_command(command_text)
-                else:
-                    handle_command(text)
+                music_control.pause()
+            except Exception:
+                pass
 
-                converse(capture)
+            try:
+                if not command_text:
+                    speak_cached("Да?")
+                    capture.flush()
+                    audio2 = capture.listen_for_utterance(timeout=config.FOLLOWUP_TIMEOUT_SEC)
+                    command_text2 = stt.transcribe(audio2) if audio2 is not None else ""
+                    if not command_text2:
+                        continue
+                    handle_command(command_text2)
+                else:
+                    handle_command(command_text)
+
+                # A command that just started/left music playing (e.g. "включи
+                # любимые треки") shouldn't immediately duck it again for a
+                # follow-up window nobody asked for — that's what froze the
+                # track right after it started. Only chase a follow-up when
+                # there's no active playback to interrupt.
+                if not music_control.is_playing():
+                    converse(capture)
             finally:
                 try:
                     music_control.resume()
                 except Exception:
                     pass
     finally:
-        detector.delete()
         capture.stop()
 
 

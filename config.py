@@ -34,17 +34,8 @@ def _find_claude_bin() -> str:
 CLAUDE_BIN = _find_claude_bin()
 CLAUDE_MODEL = "sonnet"
 
-WAKE_WORD = "Vlad"
+WAKE_WORD = "Рэс"
 FOLLOWUP_TIMEOUT_SEC = 7.0
-
-# Custom openWakeWord model for the acoustic wake-word trigger (switched from
-# Porcupine/Picovoice because its free console requires a business email to
-# sign up). The assistant's spoken persona name stays "Влад" everywhere else —
-# only the word the mic listens for is the English "Vlad", since easy custom
-# wake-word training (synthetic data generation + base embedding model) is
-# English-biased. Trained via the community Colab notebook, exported as ONNX.
-WAKEWORD_MODEL_PATH = BASE_DIR / "wake_models" / "vlad.onnx"
-WAKEWORD_THRESHOLD = 0.5
 
 WHISPER_MODEL = "mlx-community/whisper-medium-mlx"
 WHISPER_LANGUAGE = None  # None = auto-detect between ru/en

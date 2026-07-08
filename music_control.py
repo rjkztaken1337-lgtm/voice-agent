@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 from yandex_music import Client
 
@@ -23,12 +24,20 @@ _NOW_PLAYING_PATH = config.STATE_DIR / "now_playing.json"
 
 _client = None
 
-# Playing at full system volume means the very first "Влад, ..." said over loud
+# Playing at full system volume means the very first "Рэс, ..." said over loud
 # music can't even be transcribed (VAD/Whisper can't hear the user), and pause()
 # can't kick in until AFTER that command is already recognized — chicken-and-egg.
 # Capping playback volume keeps the wake word intelligible from the start; the
 # per-turn SIGSTOP ducking still handles full silence during conversation.
 _PLAYBACK_VOLUME = 35
+
+# SIGSTOP/SIGTERM freeze or kill afplay instantly, at whatever amplitude the
+# waveform happens to be at — an audible click/pop, not a clean cutoff. Dropping
+# the volume to near-silent for one short beat first means the process is
+# stopped while it's already quiet, so the click is inaudible. Kept short so it
+# doesn't delay the duck (the whole point is to free the mic for the user).
+_DUCK_VOLUME = 3
+_FADE_SEC = 0.05
 
 
 def _set_system_volume(level: int) -> None:
@@ -83,6 +92,8 @@ def _kill_current() -> None:
         except ProcessLookupError:
             pass
         try:
+            _set_system_volume(_DUCK_VOLUME)
+            time.sleep(_FADE_SEC)
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
@@ -94,18 +105,39 @@ def _kill_current() -> None:
             pass
 
 
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
 def pause() -> None:
     """Pauses the current track in place (SIGSTOP) so the mic can hear the user
-    over it — the wake-word window ducks to silence rather than just quieter."""
+    over it — the wake-word window ducks to silence rather than just quieter.
+
+    Checks liveness before touching volume: afplay exits on its own once a
+    track finishes, leaving a stale pid in now_playing.json. Without this
+    check, ducking would drop the volume first and only then discover the
+    process is gone — and since the SIGSTOP kill() is what marks state as
+    paused, the failed kill left "paused" unset forever, so every later
+    pause() re-ducked the same dead pid and nothing ever restored the volume."""
     state = _load_state()
     pid = state.get("pid")
-    if pid and not state.get("paused"):
-        try:
-            os.kill(pid, signal.SIGSTOP)
-            state["paused"] = True
-            _save_state(state)
-        except ProcessLookupError:
-            pass
+    if not pid:
+        return
+    if not _pid_alive(pid):
+        _save_state({})
+        return
+    if not state.get("paused"):
+        _set_system_volume(_DUCK_VOLUME)
+        time.sleep(_FADE_SEC)
+        os.kill(pid, signal.SIGSTOP)
+        state["paused"] = True
+        _save_state(state)
 
 
 def resume() -> None:
@@ -113,13 +145,30 @@ def resume() -> None:
     (e.g. the user's command already stopped or switched tracks)."""
     state = _load_state()
     pid = state.get("pid")
-    if pid and state.get("paused"):
-        try:
-            os.kill(pid, signal.SIGCONT)
-        except ProcessLookupError:
-            pass
+    if not pid:
+        return
+    if not _pid_alive(pid):
+        _save_state({})
+        return
+    if state.get("paused"):
+        os.kill(pid, signal.SIGCONT)
+        _set_system_volume(_PLAYBACK_VOLUME)
         state["paused"] = False
         _save_state(state)
+
+
+def is_playing() -> bool:
+    """True if a track is currently loaded and not paused — used by main.py to
+    skip the post-command follow-up window (which would otherwise duck this
+    same track for the whole timeout right after it started)."""
+    state = _load_state()
+    pid = state.get("pid")
+    if not pid or state.get("paused"):
+        return False
+    if not _pid_alive(pid):
+        _save_state({})
+        return False
+    return True
 
 
 def _play_track(track, queue=None) -> str:
