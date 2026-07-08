@@ -194,18 +194,28 @@ _MUSIC_NEXT_RE = re.compile(r"\b(?:следующий трек|дальше)\b",
 
 
 def _music_play(text):
-    if _MUSIC_LIKED_RE.search(text):
-        return music_control.play_liked()
-    m = _MUSIC_TRACK_RE.search(text)
-    if m:
-        return music_control.play_track(m.group(1).strip())
-    m = _MUSIC_PLAYLIST_RE.search(text)
-    if m:
-        return music_control.play_playlist(m.group(1).strip())
-    if _MUSIC_STOP_RE.search(text):
-        return music_control.stop()
-    if _MUSIC_NEXT_RE.search(text):
-        return music_control.next_track()
+    # Once a music phrasing is recognized below, the command is "claimed" — unlike
+    # the generic handle()-level catch (which means "not this handler, try the
+    # next"), a failure here is a real error (e.g. a transient network blip
+    # calling the Yandex Music API), not a non-match. Falling through to the
+    # brain in that case just repeats the same network call ~40x slower with no
+    # feedback in between, so report the failure immediately instead.
+    try:
+        if _MUSIC_LIKED_RE.search(text):
+            return music_control.play_liked()
+        m = _MUSIC_TRACK_RE.search(text)
+        if m:
+            return music_control.play_track(m.group(1).strip())
+        m = _MUSIC_PLAYLIST_RE.search(text)
+        if m:
+            return music_control.play_playlist(m.group(1).strip())
+        if _MUSIC_STOP_RE.search(text):
+            return music_control.stop()
+        if _MUSIC_NEXT_RE.search(text):
+            return music_control.next_track()
+    except Exception as exc:
+        print(f"[local_actions] music command failed: {type(exc).__name__}: {exc}", flush=True)
+        return "Не получилось, проблема с музыкой."
     return None
 
 
