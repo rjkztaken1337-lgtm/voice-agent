@@ -198,32 +198,26 @@ def handle_command(command_text: str):
 
 
 def converse(capture: AudioCapture):
-    """After a command is handled, keep listening for follow-ups for a short
-    window without requiring the wake word again. Falls back to wake-word mode
-    once the user goes quiet.
-
-    Re-ducks before every listen, not just once at entry: the command that got
-    us here may have just started a fresh (unpaused) track — e.g. "Рэс, включи
-    любимые треки" — or a previous follow-up may have (next track), so each
-    turn needs its own pause() to catch whatever is currently playing."""
-    while True:
-        try:
-            music_control.pause()
-        except Exception:
-            pass
-        capture.flush()
-        audio = capture.listen_for_utterance(timeout=config.FOLLOWUP_TIMEOUT_SEC)
-        if audio is None or audio.size == 0:
-            return
-        text = stt.transcribe(audio)
-        if not text:
-            return
-        handle_command(text)
-        try:
-            if music_control.is_playing():
-                return
-        except Exception:
-            pass
+    """After a command is handled, listen for exactly one follow-up in a short
+    window without requiring the wake word again, then fall back to wake-word
+    mode regardless of what that follow-up was. This must NOT loop: re-arming
+    the window after every handled follow-up turned it into an open-ended
+    listen that swallowed unrelated speech in the room (background
+    conversation, STT hallucinations on noise) as if it were addressed to the
+    assistant, one turn after another, for as long as no track happened to
+    start playing. One shot bounds the exposure to a single stray phrase."""
+    try:
+        music_control.pause()
+    except Exception:
+        pass
+    capture.flush()
+    audio = capture.listen_for_utterance(timeout=config.FOLLOWUP_TIMEOUT_SEC)
+    if audio is None or audio.size == 0:
+        return
+    text = stt.transcribe(audio)
+    if not text:
+        return
+    handle_command(text)
 
 
 def main():

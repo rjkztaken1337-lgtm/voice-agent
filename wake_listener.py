@@ -10,6 +10,13 @@ FRAME_MS = 30
 FRAME_SAMPLES = int(config.SAMPLE_RATE * FRAME_MS / 1000)
 FRAME_BYTES = FRAME_SAMPLES * 2  # int16 = 2 bytes/sample
 SILENCE_FRAMES_TO_END = int(600 / FRAME_MS)  # ~0.6s of trailing silence ends an utterance
+# Hard ceiling on a single utterance's length. Without this, continuous nearby
+# background speech (no clean 0.6s gap ever occurs) makes VAD wait forever for
+# trailing silence — the assistant looks completely unresponsive for however
+# long people keep talking nearby, then dumps one huge garbled multi-minute
+# blob into STT. Forcing a cutoff bounds the worst case and keeps the assistant
+# checking for the wake word at least this often.
+MAX_UTTERANCE_FRAMES = int(12000 / FRAME_MS)  # 12s
 
 
 class AudioCapture:
@@ -72,6 +79,8 @@ class AudioCapture:
                 num_silence += 1
                 if num_silence > SILENCE_FRAMES_TO_END:
                     break
+            if len(speech_frames) >= MAX_UTTERANCE_FRAMES:
+                break
         pcm = b"".join(speech_frames)
         audio_int16 = np.frombuffer(pcm, dtype=np.int16)
         return audio_int16.astype(np.float32) / 32768.0
