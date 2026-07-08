@@ -112,25 +112,39 @@ def run_agent_turn(user_text: str) -> str:
         "--resume" if resuming else "--session-id", session_id,
     ]
 
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=180, cwd=str(config.BASE_DIR)
-        )
-    except subprocess.TimeoutExpired:
-        return "Что-то зависло, не смог выполнить за отведённое время. Попробуй ещё раз или переформулируй."
+    for attempt in range(2):
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=180, cwd=str(config.BASE_DIR)
+            )
+        except subprocess.TimeoutExpired:
+            return "Что-то зависло, не смог выполнить за отведённое время. Попробуй ещё раз или переформулируй."
 
-    if result.returncode != 0:
-        return f"Ошибка агента: {result.stderr.strip()[:300] or 'неизвестная ошибка'}"
+        if result.returncode != 0:
+            err = result.stderr.strip()
+            # "Not logged in" here is a transient OAuth-token race, not a real
+            # logout: it can happen when another `claude` CLI invocation reads/
+            # refreshes the same credentials file at the same instant. Retrying
+            # once after a beat lets the token settle instead of surfacing a
+            # spurious login error to the user.
+            if "Not logged in" in err and attempt == 0:
+                time.sleep(1.5)
+                continue
+            return f"Ошибка агента: {err[:300] or 'неизвестная ошибка'}"
 
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return result.stdout.strip() or "Пустой ответ от агента."
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return result.stdout.strip() or "Пустой ответ от агента."
 
-    if data.get("is_error"):
-        return f"Ошибка агента: {data.get('result', 'неизвестная ошибка')}"
+        if data.get("is_error"):
+            msg = data.get("result", "неизвестная ошибка")
+            if "Not logged in" in str(msg) and attempt == 0:
+                time.sleep(1.5)
+                continue
+            return f"Ошибка агента: {msg}"
 
-    return (data.get("result") or "").strip() or "Готово."
+        return (data.get("result") or "").strip() or "Готово."
 
 
 def run_agent_turn_streaming(user_text: str):
@@ -160,70 +174,85 @@ def run_agent_turn_streaming(user_text: str):
         "--resume" if resuming else "--session-id", session_id,
     ]
 
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        cwd=str(config.BASE_DIR),
-    )
-    killer = threading.Timer(180, proc.kill)  # overall wall-clock guard
-    killer.start()
+    for attempt in range(2):
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            cwd=str(config.BASE_DIR),
+        )
+        killer = threading.Timer(180, proc.kill)  # overall wall-clock guard
+        killer.start()
 
-    # Temporary diagnostic timing (see systematic-debugging investigation into
-    # inconsistent turn latency) — prints wall/API time, tool-call count and
-    # names so slow turns can be correlated with tool use vs. plain generation.
-    t0 = time.monotonic()
-    first_token_t = None
-    tool_calls = []
+        # Temporary diagnostic timing (see systematic-debugging investigation into
+        # inconsistent turn latency) — prints wall/API time, tool-call count and
+        # names so slow turns can be correlated with tool use vs. plain generation.
+        t0 = time.monotonic()
+        first_token_t = None
+        tool_calls = []
 
-    got_text = False
-    result_text = ""
-    try:
-        for line in proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                ev = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            etype = ev.get("type")
-            if etype == "stream_event":
-                sub = ev.get("event", {})
-                if sub.get("type") == "content_block_delta":
-                    delta = sub.get("delta", {})
-                    if delta.get("type") == "text_delta" and delta.get("text"):
-                        if first_token_t is None:
-                            first_token_t = time.monotonic()
-                            print(f"[timing] first_token={round((first_token_t - t0) * 1000)}ms", flush=True)
-                        got_text = True
-                        yield delta["text"]
-            elif etype == "assistant":
-                for block in ev.get("message", {}).get("content", []):
-                    if block.get("type") == "tool_use":
-                        tool_calls.append(block.get("name", "?"))
-            elif etype == "result":
-                result_text = (ev.get("result") or "").strip()
-                elapsed = round((time.monotonic() - t0) * 1000)
-                print(
-                    f"[timing] wall={elapsed}ms cli_duration={ev.get('duration_ms')}ms "
-                    f"api_duration={ev.get('duration_api_ms')}ms turns={ev.get('num_turns')} "
-                    f"tools={tool_calls}",
-                    flush=True,
-                )
-                if ev.get("is_error") and not got_text:
-                    got_text = True
-                    yield f"Ошибка агента: {result_text or 'неизвестная ошибка'}"
-    finally:
-        killer.cancel()
+        got_text = False
+        result_text = ""
+        is_error = False
         try:
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
 
-    if not got_text:
+                etype = ev.get("type")
+                if etype == "stream_event":
+                    sub = ev.get("event", {})
+                    if sub.get("type") == "content_block_delta":
+                        delta = sub.get("delta", {})
+                        if delta.get("type") == "text_delta" and delta.get("text"):
+                            if first_token_t is None:
+                                first_token_t = time.monotonic()
+                                print(f"[timing] first_token={round((first_token_t - t0) * 1000)}ms", flush=True)
+                            got_text = True
+                            yield delta["text"]
+                elif etype == "assistant":
+                    for block in ev.get("message", {}).get("content", []):
+                        if block.get("type") == "tool_use":
+                            tool_calls.append(block.get("name", "?"))
+                elif etype == "result":
+                    result_text = (ev.get("result") or "").strip()
+                    is_error = bool(ev.get("is_error"))
+                    elapsed = round((time.monotonic() - t0) * 1000)
+                    print(
+                        f"[timing] wall={elapsed}ms cli_duration={ev.get('duration_ms')}ms "
+                        f"api_duration={ev.get('duration_api_ms')}ms turns={ev.get('num_turns')} "
+                        f"tools={tool_calls}",
+                        flush=True,
+                    )
+        finally:
+            killer.cancel()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
+
+        if got_text:
+            return
+
+        # "Not logged in" here is a transient OAuth-token race, not a real
+        # logout: it can happen when another `claude` CLI invocation reads/
+        # refreshes the same credentials file at the same instant. Retrying
+        # once after a beat lets the token settle instead of surfacing a
+        # spurious login error to the user.
+        if is_error and "Not logged in" in result_text and attempt == 0:
+            time.sleep(1.5)
+            continue
+
         # Streamed no text (killed by timeout, crash, or empty reply) — fall back
         # to whatever the final result event carried, else a spoken error.
-        yield result_text or "Что-то зависло, не смог ответить. Попробуй ещё раз."
+        if is_error:
+            yield f"Ошибка агента: {result_text or 'неизвестная ошибка'}"
+        else:
+            yield result_text or "Что-то зависло, не смог ответить. Попробуй ещё раз."
+        return
