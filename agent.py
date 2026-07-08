@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import threading
 import time
@@ -55,6 +56,20 @@ _MAX_TRANSCRIPT_BYTES = 400_000
 _MAX_TURNS_PER_SESSION = 10
 
 
+def _agent_subprocess_env() -> dict:
+    """Env for the headless `claude -p` subprocess, with its own dedicated proxy
+    API key/URL overridden (see config.AGENT_ANTHROPIC_*) instead of inheriting
+    whatever key this interactive Claude Code session itself is using. Sharing
+    one key between both caused intermittent "Not logged in" errors — the
+    proxy appears to enforce a per-key concurrent-session limit."""
+    env = os.environ.copy()
+    if config.AGENT_ANTHROPIC_API_KEY:
+        env["ANTHROPIC_API_KEY"] = config.AGENT_ANTHROPIC_API_KEY
+    if config.AGENT_ANTHROPIC_BASE_URL:
+        env["ANTHROPIC_BASE_URL"] = config.AGENT_ANTHROPIC_BASE_URL
+    return env
+
+
 def _transcript_size(session_id: str) -> int:
     """Best-effort size of the CLI's transcript for this session. Returns 0 if the
     file can't be located (the projects-dir path scheme is CC-internal), so
@@ -93,9 +108,9 @@ def _get_session_id():
 def run_agent_turn(user_text: str) -> str:
     """Runs one turn through the Claude Code CLI in headless print mode.
 
-    Session continuity (cross-restart memory) comes from --resume/--session-id,
-    using the CLI's own OAuth-backed subscription session — no separate billed
-    API key involved.
+    Session continuity (cross-restart memory) comes from --resume/--session-id.
+    Uses its own dedicated proxy API key (see _agent_subprocess_env), separate
+    from the interactive Claude Code session's key.
     """
     session_id, resuming = _get_session_id()
 
@@ -115,7 +130,12 @@ def run_agent_turn(user_text: str) -> str:
     for attempt in range(2):
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=180, cwd=str(config.BASE_DIR)
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                cwd=str(config.BASE_DIR),
+                env=_agent_subprocess_env(),
             )
         except subprocess.TimeoutExpired:
             return "Что-то зависло, не смог выполнить за отведённое время. Попробуй ещё раз или переформулируй."
@@ -153,9 +173,9 @@ def run_agent_turn_streaming(user_text: str):
     the rest is still being written (and while tool calls run).
 
     Uses --output-format stream-json (which REQUIRES --verbose) plus
-    --include-partial-messages to get token-level text deltas. This works through
-    the same proxy/auth as the non-streaming path — env is untouched; only the
-    output format and stdout parsing differ.
+    --include-partial-messages to get token-level text deltas. Uses the same
+    dedicated proxy API key as run_agent_turn (see _agent_subprocess_env);
+    only the output format and stdout parsing differ.
     """
     session_id, resuming = _get_session_id()
 
@@ -181,6 +201,7 @@ def run_agent_turn_streaming(user_text: str):
             stderr=subprocess.DEVNULL,
             text=True,
             cwd=str(config.BASE_DIR),
+            env=_agent_subprocess_env(),
         )
         killer = threading.Timer(180, proc.kill)  # overall wall-clock guard
         killer.start()

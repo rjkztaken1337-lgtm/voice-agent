@@ -10,6 +10,31 @@ BASE_DIR = Path(__file__).resolve().parent
 STATE_DIR = BASE_DIR / "db"
 
 
+def _load_env_file(path: Path) -> dict:
+    """Minimal KEY=VALUE parser for a local .env — avoids adding python-dotenv
+    as a dependency for just two variables."""
+    values = {}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+    return values
+
+
+# agent.py's headless `claude -p` subprocess uses ITS OWN dedicated proxy API
+# key/URL (below), separate from whatever key this interactive Claude Code
+# session itself is authenticated with. They used to share the same key via
+# ambient environment inheritance, which caused intermittent "Not logged in"
+# errors when both hit the proxy at once (proxy enforces per-key session
+# limits). Kept in .env (gitignored) rather than hardcoded here.
+_agent_env = _load_env_file(BASE_DIR / ".env")
+AGENT_ANTHROPIC_API_KEY = _agent_env.get("ANTHROPIC_API_KEY")
+AGENT_ANTHROPIC_BASE_URL = _agent_env.get("ANTHROPIC_BASE_URL")
+
+
 def _find_claude_bin() -> str:
     """Locate the Claude Code CLI native binary bundled with the VS Code extension.
 
