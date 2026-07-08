@@ -108,6 +108,7 @@ def run_agent_turn(user_text: str) -> str:
         "--setting-sources", "",
         "--append-system-prompt", _SYSTEM_PROMPT,
         "--model", config.CLAUDE_MODEL,
+        "--effort", config.CLAUDE_EFFORT,
         "--resume" if resuming else "--session-id", session_id,
     ]
 
@@ -155,6 +156,7 @@ def run_agent_turn_streaming(user_text: str):
         "--setting-sources", "",
         "--append-system-prompt", _SYSTEM_PROMPT,
         "--model", config.CLAUDE_MODEL,
+        "--effort", config.CLAUDE_EFFORT,
         "--resume" if resuming else "--session-id", session_id,
     ]
 

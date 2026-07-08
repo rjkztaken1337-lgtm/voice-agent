@@ -32,13 +32,21 @@ def _find_claude_bin() -> str:
 # user's existing Claude Code subscription (OAuth) instead of a billed Anthropic
 # API key, which the user cannot fund from their country.
 CLAUDE_BIN = _find_claude_bin()
-CLAUDE_MODEL = "sonnet"
+# Haiku + low effort trades some reply quality/grammar for much lower per-turn
+# latency and cost than Sonnet — acceptable here since replies are short and
+# conversational, not code-heavy reasoning.
+CLAUDE_MODEL = "haiku"
+CLAUDE_EFFORT = "low"
 
 WAKE_WORD = "Рэс"
 FOLLOWUP_TIMEOUT_SEC = 7.0
 
 WHISPER_MODEL = "mlx-community/whisper-medium-mlx"
-WHISPER_LANGUAGE = None  # None = auto-detect between ru/en
+# Pinned to "ru" rather than auto-detect: short/clipped utterances (a bare wake
+# word, a 2-3 word command) gave Whisper too little signal to guess the
+# language reliably, and a wrong guess produced garbled or English output even
+# though the assistant only ever hears Russian.
+WHISPER_LANGUAGE = "ru"
 
 # Default location for the instant weather command (used when no city is spoken).
 # QUERY is what we send to the weather API (geocodes reliably in English);
