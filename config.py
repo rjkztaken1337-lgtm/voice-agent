@@ -103,8 +103,11 @@ WHISPER_CONDITION_ON_PREVIOUS_TEXT = False
 DEFAULT_CITY_QUERY = "Saint Petersburg"
 DEFAULT_CITY_SPOKEN = "в Петербурге"
 
-VOICE_SAMPLE_PATH = BASE_DIR / "voice_sample" / "friend.wav"
 TTS_MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
+# Built-in XTTS v2 speaker preset (not a clone of anyone's voice) — one of the
+# names baked into the model's speaker_manager, chosen by ear over the other
+# built-in presets.
+TTS_SPEAKER_NAME = "Daisy Studious"
 
 # Digit-to-words conversion for TTS input (e.g. "23" -> "двадцать три"). Low
 # risk, on by default.

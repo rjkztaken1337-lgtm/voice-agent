@@ -9,7 +9,7 @@ import config
 import text_normalize
 
 _tts = None
-_cond_latents = None  # (gpt_cond_latent, speaker_embedding) for the cloned voice
+_cond_latents = None  # (gpt_cond_latent, speaker_embedding) for the chosen built-in speaker
 _synth_lock = threading.Lock()
 _CACHE_DIR = config.STATE_DIR / "tts_cache"
 
@@ -24,26 +24,20 @@ def _get_tts():
 
 
 def _get_conditioning_latents():
-    # Recomputing latents from speaker_wav on every call (what TTS.tts_to_file
-    # does internally) is most of the per-call cost for short phrases, so we
-    # derive them once and reuse — relies on coqui-tts's internal Xtts model API,
-    # pinned to coqui-tts==0.27.5.
+    # Built-in XTTS speaker presets ship their conditioning latents precomputed
+    # inside the model checkpoint (speaker_manager.speakers), so there's no wav
+    # to clone from and no per-call/per-warm-up latent computation at all —
+    # just a dict lookup by name.
     global _cond_latents
     if _cond_latents is None:
-        if not config.VOICE_SAMPLE_PATH.exists():
-            raise FileNotFoundError(
-                f"Нет сэмпла голоса: {config.VOICE_SAMPLE_PATH}. "
-                "Положи туда чистую запись друга (10-30 сек, wav)."
-            )
         model = _get_tts().synthesizer.tts_model
-        _cond_latents = model.get_conditioning_latents(
-            audio_path=[str(config.VOICE_SAMPLE_PATH)]
-        )
+        speaker = model.speaker_manager.speakers[config.TTS_SPEAKER_NAME]
+        _cond_latents = (speaker["gpt_cond_latent"], speaker["speaker_embedding"])
     return _cond_latents
 
 
 def warm_up():
-    """Loads the TTS model onto MPS and precomputes the cloned voice's
+    """Loads the TTS model onto MPS and fetches the chosen built-in speaker's
     conditioning latents, so the first real reply doesn't pay for any of it."""
     _get_conditioning_latents()
 
