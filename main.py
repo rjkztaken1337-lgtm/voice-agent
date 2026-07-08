@@ -20,6 +20,7 @@ _WAKE_RE = re.compile(r"\b(?:привет[,!.]?\s*)?р[еэ]с[а-яё]*\b[,!.]?
 # text before the match) rather than being double-handled here.
 _BARE_VOL_UP_RE = re.compile(r"^(?:громче|погромче)[.!?]*$", re.IGNORECASE)
 _BARE_VOL_DOWN_RE = re.compile(r"^(?:тише|потише)[.!?]*$", re.IGNORECASE)
+_BARE_STOP_RE = re.compile(r"^стоп[.!?]*$", re.IGNORECASE)
 _SENTENCE_RE = re.compile(r"(?<=[.!?…])\s+")
 # A sentence boundary in a live token stream: terminal punctuation (optionally
 # closing a quote/paren) immediately followed by whitespace. "3.5" / "5,5" won't
@@ -239,13 +240,13 @@ def main():
             if not text:
                 continue
 
-            # Bare volume triggers ("Громче"/"Тише" alone, no wake word) — checked
+            # Bare triggers ("Громче"/"Тише"/"Стоп" alone, no wake word) — checked
             # on the raw transcript, before split_wake_word, and anchored to the
             # WHOLE utterance so they can't fire on a stray word inside an
             # unrelated sentence. Fire-and-forget: no duck/resume, no follow-up
             # window, since there's no command boundary to bracket.
             stripped = text.strip()
-            if _BARE_VOL_UP_RE.match(stripped) or _BARE_VOL_DOWN_RE.match(stripped):
+            if _BARE_VOL_UP_RE.match(stripped) or _BARE_VOL_DOWN_RE.match(stripped) or _BARE_STOP_RE.match(stripped):
                 local_actions.handle(stripped)
                 capture.flush()
                 continue
