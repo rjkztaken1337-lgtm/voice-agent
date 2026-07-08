@@ -230,7 +230,16 @@ def run_agent_turn_streaming(user_text: str):
                     continue
 
                 etype = ev.get("type")
-                if etype == "stream_event":
+                if etype == "system":
+                    subtype = ev.get("subtype")
+                    if subtype in ("init", "status"):
+                        print(
+                            f"[timing] {subtype}"
+                            f"{'=' + ev.get('status') if subtype == 'status' else ''}"
+                            f" t={round((time.monotonic() - t0) * 1000)}ms",
+                            flush=True,
+                        )
+                elif etype == "stream_event":
                     sub = ev.get("event", {})
                     if sub.get("type") == "content_block_delta":
                         delta = sub.get("delta", {})

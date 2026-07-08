@@ -1,6 +1,7 @@
 import queue
 import re
 import threading
+import time
 
 import agent
 import audio_io
@@ -88,11 +89,15 @@ def _start_stream_synth(chunk_iter, language: str = "ru"):
                     buf = buf[match.end():]
                     if sentence:
                         print(f"[Рэс] {sentence}", flush=True)
+                        t_synth = time.monotonic()
                         audio_q.put(tts.synthesize_array(sentence, language=language))
+                        print(f"[timing] tts_synth={round((time.monotonic() - t_synth) * 1000)}ms len={len(sentence)}", flush=True)
             tail = buf.strip()
             if tail:
                 print(f"[Рэс] {tail}", flush=True)
+                t_synth = time.monotonic()
                 audio_q.put(tts.synthesize_array(tail, language=language))
+                print(f"[timing] tts_synth={round((time.monotonic() - t_synth) * 1000)}ms len={len(tail)}", flush=True)
         except Exception as exc:
             audio_q.put(exc)
         finally:
