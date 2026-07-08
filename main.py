@@ -172,10 +172,13 @@ def handle_command(command_text: str):
     except Exception:
         action_reply = None
     if action_reply is not None:
-        # These are all short, low-cardinality confirmations (volume/open-app/
-        # weather-template text) — cache-by-text so repeats are instant instead
-        # of paying live XTTS synthesis every time.
-        speak_cached(action_reply)
+        # Empty string means the action ran silently (e.g. music commands, which
+        # sound ugly cutting across the track's own audio) — nothing to speak.
+        # Non-empty replies are short, low-cardinality confirmations (volume/
+        # open-app/weather-template text) — cache-by-text so repeats are instant
+        # instead of paying live XTTS synthesis every time.
+        if action_reply:
+            speak_cached(action_reply)
         return
 
     # Real task -> the brain. Start the subprocess + sentence synthesis right away,

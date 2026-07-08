@@ -200,22 +200,32 @@ def _music_play(text):
     # calling the Yandex Music API), not a non-match. Falling through to the
     # brain in that case just repeats the same network call ~40x slower with no
     # feedback in between, so report the failure immediately instead.
+    #
+    # On success we deliberately return "" rather than the confirmation text —
+    # music switches feel abrupt/ugly with a spoken "Включаю..." cutting across
+    # the track's own audio, so success is silent (logged only) and only a
+    # genuine failure gets spoken.
     try:
         if _MUSIC_LIKED_RE.search(text):
-            return music_control.play_liked()
+            print(f"[local_actions] {music_control.play_liked()}", flush=True)
+            return ""
         m = _MUSIC_TRACK_RE.search(text)
         if m:
-            return music_control.play_track(m.group(1).strip())
+            print(f"[local_actions] {music_control.play_track(m.group(1).strip())}", flush=True)
+            return ""
         m = _MUSIC_PLAYLIST_RE.search(text)
         if m:
-            return music_control.play_playlist(m.group(1).strip())
+            print(f"[local_actions] {music_control.play_playlist(m.group(1).strip())}", flush=True)
+            return ""
         if _MUSIC_STOP_RE.search(text):
-            return music_control.stop()
+            print(f"[local_actions] {music_control.stop()}", flush=True)
+            return ""
         if _MUSIC_NEXT_RE.search(text):
-            return music_control.next_track()
+            print(f"[local_actions] {music_control.next_track()}", flush=True)
+            return ""
     except Exception as exc:
         print(f"[local_actions] music command failed: {type(exc).__name__}: {exc}", flush=True)
-        return "Не получилось, проблема с музыкой."
+        return "Не получилось, проблема с интернетом."
     return None
 
 
