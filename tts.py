@@ -63,7 +63,7 @@ def get_cached(text: str, language: str = "ru"):
     later calls — used for short filler phrases so playback is instant after
     the first warm-up."""
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    key = hashlib.sha1(f"{language}:{text}".encode()).hexdigest()[:16]
+    key = hashlib.sha1(f"{config.TTS_SPEAKER_NAME}:{language}:{text}".encode()).hexdigest()[:16]
     path = _CACHE_DIR / f"{key}.wav"
     if not path.exists():
         synthesize(text, path, language=language)
