@@ -5,6 +5,7 @@ music_control) is mocked.
 Run: .venv/bin/python3 -m unittest test_main -v
 """
 
+import queue
 import unittest
 from unittest.mock import patch
 
@@ -65,7 +66,7 @@ class ConverseFollowupWindowTests(unittest.TestCase):
              patch.object(main.music_control, "pause"), \
              patch.object(main.music_control, "is_playing", return_value=False):
             main.converse(capture)
-        fake_handle.assert_called_once_with("сколько времени")
+        fake_handle.assert_called_once_with("сколько времени", capture)
 
     def test_no_utterance_handles_nothing(self):
         capture = FakeCapture([])
@@ -75,6 +76,75 @@ class ConverseFollowupWindowTests(unittest.TestCase):
              patch.object(main.music_control, "is_playing", return_value=False):
             main.converse(capture)
         fake_handle.assert_not_called()
+
+
+class FakePlayer:
+    def __init__(self):
+        self.played = []
+        self.stop_now_calls = 0
+        self.close_calls = 0
+
+    def play(self, chunk):
+        self.played.append(chunk)
+
+    def stop_now(self):
+        self.stop_now_calls += 1
+
+    def close(self):
+        self.close_calls += 1
+
+
+class FakeCaptureNoTrigger:
+    """Stands in for a barge-in watcher that never fires — the reply plays
+    out fully and _play_with_barge_in cancels it once audio_q is drained."""
+
+    def listen_for_barge_in(self, cancel_event, on_triggered, min_consecutive=None):
+        cancel_event.wait()
+        return None
+
+
+class FakeCaptureTriggers:
+    """Stands in for a watcher that fires on_triggered immediately, as if
+    the user started talking the instant playback began."""
+
+    def __init__(self, audio):
+        self._audio = audio
+
+    def listen_for_barge_in(self, cancel_event, on_triggered, min_consecutive=None):
+        on_triggered()
+        return self._audio
+
+
+class PlayWithBargeInTests(unittest.TestCase):
+    """_play_with_barge_in() must behave like the old _drain_audio+close()
+    pattern when nobody interrupts, but cut playback instantly and return the
+    captured follow-up audio when the watcher fires."""
+
+    def test_normal_completion_closes_player_and_returns_none(self):
+        audio_q = queue.Queue()
+        audio_q.put("chunk1")
+        audio_q.put("chunk2")
+        audio_q.put(main._STREAM_DONE)
+        player = FakePlayer()
+        capture = FakeCaptureNoTrigger()
+
+        result = main._play_with_barge_in(audio_q, player, capture)
+
+        self.assertIsNone(result)
+        self.assertEqual(player.played, ["chunk1", "chunk2"])
+        self.assertEqual(player.close_calls, 1)
+        self.assertEqual(player.stop_now_calls, 0)
+
+    def test_triggered_stops_playback_and_returns_captured_audio(self):
+        audio_q = queue.Queue()
+        player = FakePlayer()
+        capture = FakeCaptureTriggers(audio="captured-audio")
+
+        result = main._play_with_barge_in(audio_q, player, capture)
+
+        self.assertEqual(result, "captured-audio")
+        self.assertEqual(player.stop_now_calls, 1)
+        self.assertEqual(player.close_calls, 0)
 
 
 if __name__ == "__main__":

@@ -85,6 +85,49 @@ class AudioCapture:
         audio_int16 = np.frombuffer(pcm, dtype=np.int16)
         return audio_int16.astype(np.float32) / 32768.0
 
+    def _read_frame_or_timeout(self, frame_bytes: int, poll_s: float, cancel_event) -> bytes | None:
+        """Like _read_frame, but bails out with None (without consuming a
+        partial frame) if `cancel_event` gets set before enough audio arrives
+        — lets a barge-in watcher notice its reply finished without blocking
+        forever on the mic queue."""
+        buf = bytearray(self._leftover)
+        while len(buf) < frame_bytes:
+            if cancel_event.is_set():
+                return None
+            try:
+                buf.extend(self._queue.get(timeout=poll_s))
+            except queue.Empty:
+                continue
+        frame, self._leftover = bytes(buf[:frame_bytes]), bytes(buf[frame_bytes:])
+        return frame
+
+    def listen_for_barge_in(self, cancel_event, on_triggered, min_consecutive: int = 4, poll_s: float = 0.1):
+        """Runs alongside TTS playback: watches the mic for `min_consecutive`
+        back-to-back speech frames (debounced against brief TTS bleed picked
+        up off the speakers) and, once confirmed, calls `on_triggered()`
+        immediately so the caller can cut playback off right then, then keeps
+        collecting through trailing silence exactly like
+        listen_for_utterance() — seeded with the pre-buffered frames so the
+        start of what the user said isn't lost. Returns the captured
+        utterance audio, or None if `cancel_event` is set first (the reply
+        finished before anyone interrupted)."""
+        pretrigger = []
+        consecutive = 0
+        while not cancel_event.is_set():
+            frame = self._read_frame_or_timeout(FRAME_BYTES, poll_s, cancel_event)
+            if frame is None:
+                continue
+            pretrigger.append(frame)
+            if self._vad.is_speech(frame, config.SAMPLE_RATE):
+                consecutive += 1
+            else:
+                consecutive = 0
+                pretrigger = pretrigger[-min_consecutive:]
+            if consecutive >= min_consecutive:
+                on_triggered()
+                return self._collect_until_silence(pretrigger, num_silence=0)
+        return None
+
     def listen_for_utterance(self, timeout: float | None = None):
         """Blocks until speech is detected and returns the segment once trailing
         silence ends. If `timeout` is given and no speech starts within that many

@@ -120,3 +120,12 @@ TTS_NORMALIZE_NUMBERS = True
 TTS_USE_RUACCENT = False
 
 SAMPLE_RATE = 16000
+
+# Barge-in: how many consecutive 30ms VAD-positive frames (~120ms at the
+# default of 4) are required before a mid-reply interruption is treated as
+# real user speech rather than the assistant's own TTS bleeding into the mic
+# off the speakers. Raise this if it false-triggers on your own voice; lower
+# it if real interruptions feel slow to register. webrtcvad can't tell "human
+# near the mic" from "speech coming out of the speakers" by itself, so this
+# debounce is a heuristic, not a real fix — see the barge-in plan notes.
+BARGE_IN_MIN_CONSECUTIVE_FRAMES = 4

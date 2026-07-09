@@ -34,7 +34,7 @@ def _split_sentences(text: str):
     return parts or [text.strip()]
 
 
-def speak(text: str, language: str = "ru"):
+def speak(text: str, capture: AudioCapture, language: str = "ru"):
     """Synthesizes and plays sentence-by-sentence: the next sentence synthesizes
     in the background while the current one plays, so long replies start
     speaking almost immediately instead of waiting on the full synthesis."""
@@ -53,10 +53,11 @@ def speak(text: str, language: str = "ru"):
 
     threading.Thread(target=produce, daemon=True).start()
     player = audio_io.StreamPlayer(tts.OUTPUT_SAMPLE_RATE)
-    try:
-        _drain_audio(audio_q, player)
-    finally:
-        player.close()
+    interrupted_audio = _play_with_barge_in(audio_q, player, capture)
+    if interrupted_audio is not None:
+        text2 = stt.transcribe(interrupted_audio)
+        if text2:
+            handle_command(text2, capture)
 
 
 def speak_cached(text: str, language: str = "ru"):
@@ -137,26 +138,67 @@ def _start_stream_synth(chunk_iter, language: str = "ru"):
     return audio_q
 
 
-def _drain_audio(audio_q, player):
-    while True:
-        item = audio_q.get()
-        if item is _STREAM_DONE:
-            return
-        if isinstance(item, Exception):
-            raise item
-        player.play(item)
+def _play_with_barge_in(audio_q, player, capture: AudioCapture):
+    """Plays audio_q into player exactly like the old _drain_audio, but races
+    it against capture.listen_for_barge_in() on a background thread: the
+    instant the user starts talking, playback is cut immediately
+    (player.stop_now(), fired from the watcher thread) and this returns the
+    captured follow-up audio instead of None, so the caller can treat it as
+    the next command with no wake word needed. On normal completion (nobody
+    interrupted) this closes the player the same way _drain_audio's callers
+    used to and returns None."""
+    cancel_event = threading.Event()
+    triggered = threading.Event()
+    result = []
+
+    def on_triggered():
+        triggered.set()
+        player.stop_now()
+
+    def watch():
+        result.append(
+            capture.listen_for_barge_in(
+                cancel_event,
+                on_triggered,
+                min_consecutive=config.BARGE_IN_MIN_CONSECUTIVE_FRAMES,
+            )
+        )
+
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
+
+    try:
+        while not triggered.is_set():
+            try:
+                item = audio_q.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if item is _STREAM_DONE:
+                break
+            if isinstance(item, Exception):
+                raise item
+            player.play(item)
+    finally:
+        cancel_event.set()
+        watcher.join()
+
+    if triggered.is_set():
+        return result[0]
+    player.close()
+    return None
 
 
-def speak_stream(chunk_iter, language: str = "ru"):
+def speak_stream(chunk_iter, capture: AudioCapture, language: str = "ru"):
     audio_q = _start_stream_synth(chunk_iter, language=language)
     player = audio_io.StreamPlayer(tts.OUTPUT_SAMPLE_RATE)
-    try:
-        _drain_audio(audio_q, player)
-    finally:
-        player.close()
+    interrupted_audio = _play_with_barge_in(audio_q, player, capture)
+    if interrupted_audio is not None:
+        text = stt.transcribe(interrupted_audio)
+        if text:
+            handle_command(text, capture)
 
 
-def handle_command(command_text: str):
+def handle_command(command_text: str, capture: AudioCapture):
     print(f"[вы] {command_text}", flush=True)
 
     # Fast path: small talk and clock/date questions answer instantly and locally,
@@ -168,7 +210,10 @@ def handle_command(command_text: str):
         hit = None
     if hit is not None:
         reply, static = hit
-        (speak_cached if static else speak)(reply)
+        if static:
+            speak_cached(reply)
+        else:
+            speak(reply, capture)
         return
 
     # Instant local actions: weather (fast API, not the slow web search), opening
@@ -192,10 +237,11 @@ def handle_command(command_text: str):
     # quick answers don't get a needless "Секунду".
     audio_q = _start_stream_synth(agent.run_agent_turn_streaming(command_text))
     player = audio_io.StreamPlayer(tts.OUTPUT_SAMPLE_RATE)
-    try:
-        _drain_audio(audio_q, player)
-    finally:
-        player.close()
+    interrupted_audio = _play_with_barge_in(audio_q, player, capture)
+    if interrupted_audio is not None:
+        text = stt.transcribe(interrupted_audio)
+        if text:
+            handle_command(text, capture)
 
 
 def converse(capture: AudioCapture):
@@ -218,7 +264,7 @@ def converse(capture: AudioCapture):
     text = stt.transcribe(audio)
     if not text:
         return
-    handle_command(text)
+    handle_command(text, capture)
 
 
 def main():
@@ -270,9 +316,9 @@ def main():
                     command_text2 = stt.transcribe(audio2) if audio2 is not None else ""
                     if not command_text2:
                         continue
-                    handle_command(command_text2)
+                    handle_command(command_text2, capture)
                 else:
-                    handle_command(command_text)
+                    handle_command(command_text, capture)
 
                 # A command that just started/left music playing (e.g. "включи
                 # любимые треки") shouldn't immediately duck it again for a

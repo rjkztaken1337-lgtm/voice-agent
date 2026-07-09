@@ -107,6 +107,20 @@ class StreamPlayer:
                 rem += len(self._cur) - self._pos
             return rem
 
+    def stop_now(self):
+        """Cuts playback off immediately (barge-in): drop everything queued
+        instead of letting it drain, so the callback goes silent on the very
+        next buffer. Contrast with close(), which waits for _pending() to
+        empty first."""
+        with self._lock:
+            self._chunks.clear()
+            self._cur = None
+            self._pos = 0
+        try:
+            self._stream.stop()
+        finally:
+            self._stream.close()
+
     def close(self):
         # Let the callback play out everything queued, plus a short tail for the
         # device's own buffer, before tearing the stream down.
